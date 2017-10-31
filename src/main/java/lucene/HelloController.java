@@ -7,8 +7,8 @@ import org.springframework.web.servlet.ModelAndView;
 @Controller
 public class HelloController {
 
-	@RequestMapping("/hello")
+	@RequestMapping("/*")
 	public ModelAndView mymethod(){
-		return new ModelAndView("hellopage","msg","Hello First Spring");
+		return null;
 	}
 }

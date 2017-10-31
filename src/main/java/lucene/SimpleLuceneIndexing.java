@@ -3,6 +3,7 @@ package lucene;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.StringReader;
@@ -13,11 +14,10 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Set;
 
+import org.apache.lucene.analysis.CharArraySet;
 import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.analysis.core.LowerCaseFilter;
-import org.apache.lucene.analysis.core.StopAnalyzer;
 import org.apache.lucene.analysis.core.StopFilter;
-import org.apache.lucene.analysis.en.EnglishAnalyzer;
 import org.apache.lucene.analysis.en.PorterStemFilter;
 import org.apache.lucene.analysis.miscellaneous.ASCIIFoldingFilter;
 import org.apache.lucene.analysis.standard.ClassicFilter;
@@ -34,17 +34,21 @@ import org.apache.lucene.queryparser.classic.ParseException;
 import org.apache.lucene.queryparser.classic.QueryParser;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.Query;
-import org.apache.lucene.search.ScoreDoc;
+import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.search.TopScoreDocCollector;
+import org.apache.lucene.search.highlight.Formatter;
+import org.apache.lucene.search.highlight.Fragmenter;
+import org.apache.lucene.search.highlight.Highlighter;
+import org.apache.lucene.search.highlight.InvalidTokenOffsetsException;
+import org.apache.lucene.search.highlight.QueryScorer;
+import org.apache.lucene.search.highlight.SimpleHTMLFormatter;
+import org.apache.lucene.search.highlight.SimpleSpanFragmenter;
+import org.apache.lucene.search.highlight.TokenSources;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.RAMDirectory;
-import org.apache.lucene.util.Version;
 
 /**
- * Lucene Demo: basic similarity based content indexing
- * 
- * @author Sharonpova Current sample files fragments of wikibooks and
- *         stackoverflow.
+ * @author ShSudha Sravan Samudrala
  */
 
 public class SimpleLuceneIndexing {
@@ -64,7 +68,7 @@ public class SimpleLuceneIndexing {
 	}
 
 	private static void indexFile(IndexWriter writer, File f) throws IOException {
-		System.out.println("Indexing " + f.getName());
+		// System.out.println("Indexing " + f.getName());
 		Document doc = new Document();
 		doc.add(new TextField("filename", f.getName(), TextField.Store.YES));
 
@@ -85,16 +89,13 @@ public class SimpleLuceneIndexing {
 
 			System.out.println("something wrong with indexing content of the files");
 		}
-
 		writer.addDocument(doc);
-
 	}
 
-	public static String[] mainCall(int index, String path) throws IOException, ParseException {
-		////////////////////////////////////////////////
-		/// CHANGE THIS MODEL DATA BEFORE SUBMITTING ///
-		////////////////////////////////////////////////
-		System.out.println("Lucene started");
+	public static String[] mainCall(int index, String path)
+			throws IOException, ParseException, InvalidTokenOffsetsException {
+
+		System.out.println("Starting Lucene..");
 		String answerArray[] = new String[10];
 		String type[] = { "answer", "question", "answer accepted-answer", "answer", "question", "question", "answer",
 				"answer", "answer", "answer accepted-answer" };
@@ -126,44 +127,77 @@ public class SimpleLuceneIndexing {
 
 		indexDirectory(writer, dataDir);
 		writer.close();
-
 		System.out.println("Getting tokens for the selected post");
+
 		// Query string - Modified to get the tokens from the processed text
 		List<Keyword> postKeywords = tokenStream(text[index]);
 		StringBuilder queryString = new StringBuilder("contents:");
-		
+
 		for (int i = 0; i < 10; i++) {
 			Keyword word = postKeywords.get(i);
 			Set<String> terms = new HashSet<String>();
 			terms = word.getTerms();
 			for (String s : terms) {
 				queryString.append(s).append(" ");
-//				System.out.println(s);
 			}
 		}
 		System.out.println("Query String: " + queryString.toString());
-		
+
 		Query query = new QueryParser("contents", analyzer).parse(queryString.toString());
 		int hitsPerPage = 10;
 		IndexReader reader = null;
 		TopScoreDocCollector collector = null;
 		IndexSearcher searcher = null;
-		
+
 		reader = DirectoryReader.open(indexDir);
 		searcher = new IndexSearcher(reader);
-		collector = TopScoreDocCollector.create(hitsPerPage);
-		searcher.search(query, collector);
 
-		ScoreDoc[] hits = collector.topDocs().scoreDocs;
-		System.out.println("Found " + hits.length + " hits.");
-		System.out.println();
+		TopDocs hits = searcher.search(query, hitsPerPage);
 
-		for (int i = 0; i < hits.length; ++i) {
-			int docId = hits[i].doc;
-			Document d;
-			d = searcher.doc(docId);
-			answerArray[i] = d.get("filename");
-			System.out.println((i + 1) + ". " + d.get("filename"));
+		// Highlighter code
+		Formatter formatter = new SimpleHTMLFormatter();
+		QueryScorer scorer = new QueryScorer(query);
+		Highlighter highlighter = new Highlighter(formatter, scorer);
+		Fragmenter fragmenter = new SimpleSpanFragmenter(scorer, 10);
+		highlighter.setTextFragmenter(fragmenter);
+
+		// Iterate over found results
+		for (int i = 0; i < hits.scoreDocs.length; i++) {
+			int docid = hits.scoreDocs[i].doc;
+			Document doc = searcher.doc(docid);
+			String title = doc.get("filename");
+
+			// Printing - to which document result belongs
+			System.out.println("Path:" + title);
+
+			// Get stored text from found document
+			String docText = doc.get("contents");
+
+			// Create token stream
+			TokenStream stream = TokenSources.getAnyTokenStream(reader, docid, "contents", analyzer);
+
+			// Get highlighted text fragments
+			String[] frags = highlighter.getBestFragments(stream, docText, 50);
+			for (String frag : frags) {
+				System.out.println("=======================");
+				System.out.println(frag);
+
+				File codeFile = new File(
+						"/home/sravan/Desktop/Sem-3/Adaptive-Web/Programming-Assignments/Assignment3/data/CrawledCodeFiles/"
+								+ title);
+				if (codeFile.exists() && !codeFile.isDirectory()) {
+					FileReader fr = new FileReader(codeFile);
+					BufferedReader br = new BufferedReader(fr);
+					StringBuilder sb = new StringBuilder();
+					String temp = "";
+
+					while ((temp = br.readLine()) != null) {
+						sb.append(temp).append("\n");
+					}
+					br.close();
+					System.out.println(sb.toString());
+				}
+			}
 		}
 
 		reader.close();
@@ -186,23 +220,38 @@ public class SimpleLuceneIndexing {
 		tok = new LowerCaseFilter(tokClassic);
 		tok = new ClassicFilter(tok);
 		tok = new ASCIIFoldingFilter(tok);
-		tok = new StopFilter(tok, StopAnalyzer.ENGLISH_STOP_WORDS_SET);
+
+		CharArraySet stopSet = CharArraySet.copy(StandardAnalyzer.STOP_WORDS_SET);
+		stopSet.add("you");
+		stopSet.add("i");
+		stopSet.add("can");
+		stopSet.add("end");
+		stopSet.add("code");
+		stopSet.add("book");
+		stopSet.add("move");
+		stopSet.add("open");
+		stopSet.add("type");
+		stopSet.add("found");
+		stopSet.add("other");
+		stopSet.add("lost");
+		stopSet.add("question");
+		stopSet.add("first");
+
+		tok = new StopFilter(tok, stopSet);
 
 		List<Keyword> keywords = new LinkedList<Keyword>();
 		CharTermAttribute token = tok.getAttribute(CharTermAttribute.class);
 		tok.reset();
-		
+
 		while (tok.incrementToken()) {
 			String term = token.toString();
 			String stem = stem(term);
-//			System.out.println("term = " + term + " stem = " + stem);
-			
+
 			if (stem != null) {
 				// create the keyword or get the existing one if any
 				Keyword keyword = find(keywords, new Keyword(stem.replaceAll("-0", "-")));
 				// add its corresponding initial token
 				keyword.add(term.replaceAll("-0", "-"));
-
 			}
 		}
 
@@ -235,16 +284,14 @@ public class SimpleLuceneIndexing {
 			if (stems.size() != 1) {
 				return null;
 			}
-			
+
 			String stem = stems.iterator().next();
-			
+
 			// if the stem has non-alphanumerical chars, return null
 			if (!stem.matches("[a-zA-Z0-9-]+")) {
 				return null;
 			}
-
 			return stem;
-
 		} finally {
 			if (tokenStream != null) {
 				tokenStream.close();
